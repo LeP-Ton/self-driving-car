@@ -3,11 +3,11 @@
  *
  * 一代的完整生命周期：
  * 1. startGeneration：根据传入的大脑创建 AI 种群与无限交通流。
- * 2. simulateTick：推进车辆、记录行为、计算适应度并判断本代是否结束。
+ * 2. simulateTick：推进车辆、记录行为、计算前进距离并判断本代是否结束。
  * 3. evolveNextGeneration：排名、保留精英、选择亲本、交叉、变异并创建下一代。
  * 4. animate：按面板倍速重复模拟，再统一绘制画面和统计数据。
  *
- * 这里的“最佳车”指实时适应度最高的车，不一定是纵向位置最靠前的车。
+ * “最佳车”优先选择未淘汰车辆；淘汰状态相同时，选择前进距离最远的车辆。
  */
 
 // ==================== 固定规则与默认参数 ====================
@@ -34,8 +34,8 @@ const CONFIG = Object.freeze({
     followingReleaseTicks: 60,
     // 累计命中 300 个跟车帧后淘汰车辆，不替神经网络强制选择转向。
     followingEliminationTicks: 300,
-    // V7 统一了碰撞与跟车淘汰惩罚，旧版评分不再具有可比性。
-    storageKey: "selfDrivingCarGenerationStateV7"
+    // V8 使用“存活优先、距离第二”的简化规则，旧版积分不再具有可比性。
+    storageKey: "selfDrivingCarGenerationStateV8"
 });
 
 // 这三个参数可在面板修改；为保证本代评分公平，只在下一代开始时生效。
@@ -134,16 +134,13 @@ function startGeneration(brains) {
             // startY 用于累计前进距离；lastProgressY 用于判断种群是否停滞。
             startY: car.y,
             lastProgressY: car.y,
-            // 闲置、跟车、超车等行为会参与淘汰或适应度计算。
-            aliveTicks: 0,
-            idleTicks: 0,
-            followingTicks: 0,
+            // 跟车状态只负责触发硬淘汰，超车集合只用于面板统计。
             consecutiveFollowingTicks: 0,
             missedFollowingTicks: 0,
             longestFollowingTicks: 0,
             eliminatedForFollowing: false,
             overtakenTraffic: new Set(),
-            score: 0
+            distance: 0
         };
         cars.push(car);
     }
@@ -199,12 +196,8 @@ function simulateTick() {
 
     for (const car of cars) {
         car.update(road.borders, traffic);
-        if (!car.damaged) car.training.aliveTicks++;
         if (recordAliveProgress(car)) {
             aliveVehicleProgressed = true;
-        }
-        if (!car.damaged && Math.abs(car.speed) < 0.1) {
-            car.training.idleTicks++;
         }
         updateFollowingState(car);
 
@@ -212,12 +205,12 @@ function simulateTick() {
         traffic.forEach(vehicle => {
             if (car.y < vehicle.y) car.training.overtakenTraffic.add(vehicle.trafficId);
         });
-        car.training.score = calculateFitness(car);
+        car.training.distance = calculateDistance(car);
     }
 
-    // 实时最佳按综合适应度选择，因此超车、碰撞时可能切换，并非单纯选择最靠前车辆。
+    // 未淘汰车辆永远优先；状态相同时，选择与第 9 阶段一致的最远车辆。
     bestCar = cars.reduce((best, car) =>
-        car.training.score > best.training.score ? car : best
+        compareCarsForSelection(car, best) > 0 ? car : best
     );
     recyclePassedTraffic();
 
@@ -313,7 +306,6 @@ function updateFollowingState(car) {
     });
 
     if (isFollowing) {
-        car.training.followingTicks++;
         car.training.consecutiveFollowingTicks++;
         car.training.missedFollowingTicks = 0;
         car.training.longestFollowingTicks = Math.max(
@@ -335,45 +327,52 @@ function updateFollowingState(car) {
     }
 }
 
-// ==================== 适应度与遗传算法 ====================
+// ==================== 距离排序与遗传算法 ====================
 
 /**
- * 计算适应度（越高越好）：
- * 前进距离 × 2 + 超车数量 × 1000 - 终止型失败 5000 - 闲置帧数 × 0.05。
- * 撞道路、撞交通车、长期跟车淘汰都通过 damaged 统一扣一次 5000。
+ * 与第 9 阶段相同，只计算车辆从起点向前行驶的距离。
+ * 碰撞和长期跟车通过 damaged 作为硬淘汰条件，不再换算成人工分数。
  */
-function calculateFitness(car) {
-    const progress = car.training.startY - car.y;
-    const progressReward = progress * 2;
-    const overtakeReward = car.training.overtakenTraffic.size * 1000;
-    // 撞击与长期跟车都属于终止型失败，统一只扣一次，避免失败类型导致重复计分。
-    const eliminationPenalty = car.damaged ? 5000 : 0;
-    const idlePenalty = car.training.idleTicks * 0.05;
+function calculateDistance(car) {
+    return car.training.startY - car.y;
+}
 
-    // 跟车过程不重复扣分；达到硬阈值后由淘汰标记一次性施加足够大的惩罚。
-    return progressReward + overtakeReward
-        - eliminationPenalty
-        - idlePenalty;
+/**
+ * 比较两辆车的选择优先级：
+ * 1. 未淘汰车辆一定优于已淘汰车辆。
+ * 2. 两车淘汰状态相同时，前进距离更远者更优。
+ * 3. 如果全员淘汰，仍能从失败车辆中选择距离最远者继续进化。
+ */
+function compareCarsForSelection(left, right) {
+    if (left.damaged !== right.damaged) {
+        return left.damaged ? -1 : 1;
+    }
+    return left.training.distance - right.training.distance;
 }
 
 /**
  * 结算本代并生成下一代：
- * 1. 按适应度排名并保存本代冠军。
+ * 1. 按“存活优先、距离第二”排名并保存本代冠军。
  * 2. 原样保留精英。
  * 3. 从前 10 名中选择两个亲本，交叉大脑后执行随机变异。
  * 4. 用完全随机个体补足种群多样性。
  */
 function evolveNextGeneration(reason) {
     const rankedCars = [...cars].sort(
-        (left, right) => right.training.score - left.training.score
+        (left, right) => compareCarsForSelection(right, left)
     );
     const champion = rankedCars[0];
-    const championScore = champion.training.score;
+    const championDistance = champion.training.distance;
+    const championSurvived = !champion.damaged;
 
-    history.push({ generation, score: championScore });
+    history.push({ generation, distance: championDistance, survived: championSurvived });
     history = history.slice(-30);
-    if (!bestEver || championScore > bestEver.score) {
-        bestEver = { score: championScore, brain: cloneBrain(champion.brain) };
+    if (isBetterThanHistoricalBest(champion)) {
+        bestEver = {
+            distance: championDistance,
+            survived: championSurvived,
+            brain: cloneBrain(champion.brain)
+        };
     }
 
     activatePendingTrainingSettings();
@@ -407,19 +406,30 @@ function evolveNextGeneration(reason) {
     generation++;
     saveTrainingState();
     startGeneration(nextBrains);
-    setStatus(`第 ${generation - 1} 代因“${reason}”结束，冠军得分 ${formatScore(championScore)}；已进入第 ${generation} 代。`);
+    setStatus(`第 ${generation - 1} 代因“${reason}”结束，冠军距离 ${formatDistance(championDistance)}；已进入第 ${generation} 代。`);
+}
+
+/** 历史记录同样先比较是否存活，再比较前进距离。 */
+function isBetterThanHistoricalBest(champion) {
+    if (!bestEver) return true;
+
+    const championSurvived = !champion.damaged;
+    if (championSurvived !== bestEver.survived) {
+        return championSurvived;
+    }
+    return champion.training.distance > bestEver.distance;
 }
 
 /**
- * 锦标赛选择：随机抽取三个候选，返回其中得分最高者。
- * 它让高分车辆更容易成为亲本，同时不给第一名绝对垄断权。
+ * 锦标赛选择：随机抽取三个候选，返回其中选择优先级最高者。
+ * 它让存活且距离更远的车辆更容易成为亲本，同时不给第一名绝对垄断权。
  */
 function tournamentSelect(parentPool) {
     const candidates = Array.from({ length: 3 }, () =>
         parentPool[Math.floor(Math.random() * parentPool.length)]
     );
     return candidates.reduce((best, car) =>
-        car.training.score > best.training.score ? car : best
+        compareCarsForSelection(car, best) > 0 ? car : best
     );
 }
 
@@ -509,8 +519,8 @@ function updateStats() {
     document.getElementById("generationValue").textContent = generation;
     document.getElementById("aliveValue").textContent = `${aliveCount} / ${trainingSettings.populationSize}`;
     document.getElementById("progressValue").textContent = `${Math.min(progress, 100).toFixed(1)}%`;
-    document.getElementById("currentScoreValue").textContent = formatScore(bestCar?.training.score || 0);
-    document.getElementById("bestScoreValue").textContent = formatScore(bestEver?.score || 0);
+    document.getElementById("currentScoreValue").textContent = formatDistance(bestCar?.training.distance || 0);
+    document.getElementById("bestScoreValue").textContent = formatDistance(bestEver?.distance || 0);
     document.getElementById("overtakeValue").textContent = bestCar?.training.overtakenTraffic.size || 0;
     document.getElementById("trafficGeneratedValue").textContent = nextTrafficId - 1;
     document.getElementById("followingValue").textContent = `${bestCar?.training.longestFollowingTicks || 0} 帧`;
@@ -587,7 +597,7 @@ function setSimulationSpeed(value) {
 
 /** 清空 V7 训练进度并以当前生效参数重新创建随机第一代。 */
 function resetTraining() {
-    const confirmed = window.confirm("确定清空代数、历史最高分和已保存的大脑吗？");
+    const confirmed = window.confirm("确定清空代数、历史最远距离和已保存的大脑吗？");
     if (!confirmed) return;
 
     localStorage.removeItem(CONFIG.storageKey);
@@ -625,7 +635,7 @@ function setStatus(message) {
     document.getElementById("statusText").textContent = message;
 }
 
-/** 所有分数统一显示一位小数。 */
-function formatScore(score) {
-    return Number(score).toFixed(1);
+/** 所有距离统一显示一位小数。 */
+function formatDistance(distance) {
+    return Number(distance).toFixed(1);
 }
