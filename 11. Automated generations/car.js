@@ -1,5 +1,5 @@
 class Car {
-    constructor(x, y, width, height, controlType, maxSpeed = 3, color = "blue") {
+    constructor(x, y, width, height, controlType, maxSpeed = 3, color = "blue", minSpeed = -maxSpeed / 2) {
         this.x = x;
         this.y = y;
         this.width = width;
@@ -8,6 +8,8 @@ class Car {
         this.speed = 0;
         this.acceleration = 0.2;
         this.maxSpeed = maxSpeed;
+        // 未显式配置时沿用原来的倒车下限；训练测试车会传入面板配置值。
+        this.minSpeed = Math.max(-maxSpeed / 2, Math.min(maxSpeed, minSpeed));
         this.friction = 0.05;
         this.angle = 0;
         this.damaged = false;
@@ -104,6 +106,9 @@ class Car {
         if (this.speed > 0) this.speed -= this.friction;
         if (this.speed < 0) this.speed += this.friction;
         if (Math.abs(this.speed) < this.friction) this.speed = 0;
+
+        // 始终应用速度下限：测试车配置为 0 时可以停车，但不能再倒车。
+        this.speed = Math.max(this.speed, this.minSpeed);
 
         if (this.speed !== 0) {
             const direction = this.speed > 0 ? 1 : -1;

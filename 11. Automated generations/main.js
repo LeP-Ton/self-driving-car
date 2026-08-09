@@ -38,11 +38,12 @@ const CONFIG = Object.freeze({
     storageKey: "selfDrivingCarGenerationStateV8"
 });
 
-// 这三个参数可在面板修改；为保证本代评分公平，只在下一代开始时生效。
+// 这些参数可在面板修改；为保证本代评分公平，只在下一代开始时生效。
 const DEFAULT_TRAINING_SETTINGS = Object.freeze({
     generationTicks: 5000,
     populationSize: 100,
-    mutationAmount: 0.1
+    mutationAmount: 0.1,
+    minSpeed: 0
 });
 
 const TRAFFIC_PATTERN = Object.freeze([
@@ -126,7 +127,16 @@ function startGeneration(brains) {
     cars = [];
 
     for (let index = 0; index < trainingSettings.populationSize; index++) {
-        const car = new Car(road.getLaneCenter(1), 100, 30, 50, "AI");
+        const car = new Car(
+            road.getLaneCenter(1),
+            100,
+            30,
+            50,
+            "AI",
+            3,
+            "blue",
+            trainingSettings.minSpeed
+        );
         if (brains[index]) car.brain = cloneBrain(brains[index]);
 
         // 训练元数据不放进 Car 类，避免驾驶模型与世代管理相互耦合。
@@ -535,14 +545,16 @@ function applyTrainingSettings() {
     pendingTrainingSettings = sanitizeTrainingSettings({
         generationTicks: document.getElementById("generationTicksInput").value,
         populationSize: document.getElementById("populationSizeInput").value,
-        mutationAmount: document.getElementById("mutationAmountInput").value
+        mutationAmount: document.getElementById("mutationAmountInput").value,
+        minSpeed: document.getElementById("minSpeedInput").value
     });
     syncTrainingSettingsControls(pendingTrainingSettings);
     setStatus(
         `参数已保存，将在第 ${generation + 1} 代生效：`
         + `${pendingTrainingSettings.generationTicks} 帧、`
         + `${pendingTrainingSettings.populationSize} 辆车、`
-        + `变异 ${pendingTrainingSettings.mutationAmount.toFixed(2)}。`
+        + `变异 ${pendingTrainingSettings.mutationAmount.toFixed(2)}、`
+        + `最小速度 ${pendingTrainingSettings.minSpeed.toFixed(2)}。`
     );
 }
 
@@ -557,7 +569,8 @@ function sanitizeTrainingSettings(settings = {}) {
     return {
         generationTicks: clampNumber(settings.generationTicks, 500, 50000, 5000, true),
         populationSize: clampNumber(settings.populationSize, 10, 500, 100, true),
-        mutationAmount: clampNumber(settings.mutationAmount, 0, 1, 0.1, false)
+        mutationAmount: clampNumber(settings.mutationAmount, 0, 1, 0.1, false),
+        minSpeed: clampNumber(settings.minSpeed, 0, 3, 0, false)
     };
 }
 
@@ -574,6 +587,7 @@ function syncTrainingSettingsControls(settings = trainingSettings) {
     document.getElementById("generationTicksInput").value = settings.generationTicks;
     document.getElementById("populationSizeInput").value = settings.populationSize;
     document.getElementById("mutationAmountInput").value = settings.mutationAmount;
+    document.getElementById("minSpeedInput").value = settings.minSpeed;
 }
 
 /** 暂停或恢复模拟；绘制循环仍保持运行。 */

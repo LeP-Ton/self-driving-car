@@ -2,6 +2,8 @@
 
 ## 当前变更文档
 
+- `workflow/20260809203238-fix-zero-minimum-speed-semantics.md` - 修正最小速度 0 仍可倒车的问题，并保留交通车原有倒车下限；理解速度下限语义时读取。
+- `workflow/20260809201329-add-minimum-test-car-speed.md` - 为测试车增加默认 0、可配置且随下一代生效的最小速度；调整训练车速度下限时读取。
 - `workflow/20260809194712-manage-distance-experiment-with-worktree.md` - 将纯距离算法迁移到独立实验分支和 worktree，移除目录副本；维护多方案实验工作流时读取。
 - `workflow/20260809193328-relocate-11-1-distance-experiment.md` - 将 11.1 移入第 11 阶段并按纯距离选择特点重命名；维护 11.x 探索版本结构时读取。
 - `workflow/20260809192442-create-11-1-distance-branch.md` - 从第 11 阶段冻结出 11.1 纯距离训练分支，并隔离训练存储；进行评分方案对照或维护 11.1 时读取。
@@ -24,6 +26,7 @@
 
 ## 关键记忆
 
+- 第 11 阶段测试车最小速度默认是 0，可在面板设置为 0～3；设置为 0 时可停车但不能倒车，设置为正数时不能停车或倒车，参数在下一代生效并持久化，交通车不受影响。
 - 纯距离算法位于 `experiment/11.1-pure-distance-selection` 分支，对应同级 worktree `self-driving-car-11.1-pure-distance-selection`；运行其中的 `11. Automated generations/index.html`。
 - 项目没有包管理器和构建步骤，各课程阶段均可独立运行。
 - 推荐从 `11. Automated generations/index.html` 体验自动化训练；原课程内容仍以第 9、10 阶段作为对应实验版本。
