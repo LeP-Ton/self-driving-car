@@ -27,13 +27,6 @@ const CONFIG = Object.freeze({
     // 镜头使用插值和最大步长限制，减少实时最佳车辆切换造成的抖动。
     cameraSmoothing: 0.15,
     cameraBaseMaxStep: 8,
-    // 跟车检测采用进入/退出两个距离阈值，避免在边界附近反复开始和结束计时。
-    followingEnterDistance: 170,
-    followingExitDistance: 220,
-    // 连续 60 帧未检测到跟车，才真正结束本次跟车会话。
-    followingReleaseTicks: 60,
-    // 累计命中 300 个跟车帧后淘汰车辆，不替神经网络强制选择转向。
-    followingEliminationTicks: 300,
     // V8 使用“存活优先、距离第二”的简化规则，旧版积分不再具有可比性。
     storageKey: "selfDrivingCarGenerationStateV8"
 });
@@ -144,11 +137,7 @@ function startGeneration(brains) {
             // startY 用于累计前进距离；lastProgressY 用于判断种群是否停滞。
             startY: car.y,
             lastProgressY: car.y,
-            // 跟车状态只负责触发硬淘汰，超车集合只用于面板统计。
-            consecutiveFollowingTicks: 0,
-            missedFollowingTicks: 0,
-            longestFollowingTicks: 0,
-            eliminatedForFollowing: false,
+            // 超车集合仅用于面板统计，不参与距离筛选。
             overtakenTraffic: new Set(),
             distance: 0
         };
@@ -209,8 +198,6 @@ function simulateTick() {
         if (recordAliveProgress(car)) {
             aliveVehicleProgressed = true;
         }
-        updateFollowingState(car);
-
         // Set 以唯一 trafficId 去重，同一辆交通车在一次回收周期内只计一次超车。
         traffic.forEach(vehicle => {
             if (car.y < vehicle.y) car.training.overtakenTraffic.add(vehicle.trafficId);
@@ -243,7 +230,7 @@ function simulateTick() {
     }
 }
 
-// ==================== 无限交通、进展与跟车规则 ====================
+// ==================== 无限交通与进展规则 ====================
 
 /**
  * 将已经落后领先 AI 的交通车移动到队列最前方。
@@ -290,58 +277,11 @@ function recordAliveProgress(car) {
     return false;
 }
 
-/**
- * 更新跟车会话。
- * 进入阈值较小、退出阈值较大，并允许短暂丢失目标，称为“滞回检测”。
- * 跟车过程不逐帧扣分；累计命中 300 帧时直接淘汰。
- */
-function updateFollowingState(car) {
-    if (car.damaged) {
-        car.training.consecutiveFollowingTicks = 0;
-        car.training.missedFollowingTicks = 0;
-        return;
-    }
-
-    const followingSessionActive = car.training.consecutiveFollowingTicks > 0;
-    const distanceThreshold = followingSessionActive
-        ? CONFIG.followingExitDistance
-        : CONFIG.followingEnterDistance;
-    const lateralThresholdScale = followingSessionActive ? 1 : 0.75;
-    const isFollowing = traffic.some(vehicle => {
-        const forwardGap = car.y - vehicle.y;
-        const sameLaneThreshold = (car.width + vehicle.width) * lateralThresholdScale;
-        return forwardGap > 0
-            && forwardGap <= distanceThreshold
-            && Math.abs(car.x - vehicle.x) < sameLaneThreshold;
-    });
-
-    if (isFollowing) {
-        car.training.consecutiveFollowingTicks++;
-        car.training.missedFollowingTicks = 0;
-        car.training.longestFollowingTicks = Math.max(
-            car.training.longestFollowingTicks,
-            car.training.consecutiveFollowingTicks
-        );
-        if (car.training.consecutiveFollowingTicks >= CONFIG.followingEliminationTicks) {
-            // 不替神经网络选择转向方向；直接停止该个体，避免不安全的强制转向干扰训练。
-            car.training.eliminatedForFollowing = true;
-            car.damaged = true;
-        }
-    } else {
-        car.training.missedFollowingTicks++;
-        // 必须持续脱离一段时间才结束本次跟车，过滤车距和横向位置的短暂抖动。
-        if (car.training.missedFollowingTicks >= CONFIG.followingReleaseTicks) {
-            car.training.consecutiveFollowingTicks = 0;
-            car.training.missedFollowingTicks = 0;
-        }
-    }
-}
-
 // ==================== 距离排序与遗传算法 ====================
 
 /**
  * 与第 9 阶段相同，只计算车辆从起点向前行驶的距离。
- * 碰撞和长期跟车通过 damaged 作为硬淘汰条件，不再换算成人工分数。
+ * 碰撞通过 damaged 作为硬淘汰条件，不再换算成人工分数。
  */
 function calculateDistance(car) {
     return car.training.startY - car.y;
@@ -533,10 +473,6 @@ function updateStats() {
     document.getElementById("bestScoreValue").textContent = formatDistance(bestEver?.distance || 0);
     document.getElementById("overtakeValue").textContent = bestCar?.training.overtakenTraffic.size || 0;
     document.getElementById("trafficGeneratedValue").textContent = nextTrafficId - 1;
-    document.getElementById("followingValue").textContent = `${bestCar?.training.longestFollowingTicks || 0} 帧`;
-    document.getElementById("followingEliminatedValue").textContent = cars.filter(
-        car => car.training.eliminatedForFollowing
-    ).length;
     document.getElementById("mutationValue").textContent = trainingSettings.mutationAmount.toFixed(2);
 }
 
