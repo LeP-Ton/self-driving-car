@@ -1,19 +1,37 @@
 const CONFIG = Object.freeze({
-    populationSize: 100,
     eliteCount: 5,
     parentPoolSize: 10,
     randomImmigrantCount: 10,
-    mutationAmount: 0.1,
-    maxTicksPerGeneration: 5000,
     stagnationTicks: 180,
+    trafficCount: 10,
+    trafficRecycleBehindDistance: 400,
+    cameraSmoothing: 0.15,
+    cameraBaseMaxStep: 8,
     followingEnterDistance: 170,
     followingExitDistance: 220,
     followingReleaseTicks: 60,
-    followingGraceTicks: 180,
     followingEliminationTicks: 300,
-    // V5 使用带滞回的跟车判定，避免距离轻微波动反复清零计时。
-    storageKey: "selfDrivingCarGenerationStateV5"
+    // V6 使用循环生成的无限交通流，旧版有限场景分数不再具有可比性。
+    storageKey: "selfDrivingCarGenerationStateV6"
 });
+
+const DEFAULT_TRAINING_SETTINGS = Object.freeze({
+    generationTicks: 5000,
+    populationSize: 100,
+    mutationAmount: 0.1
+});
+
+const TRAFFIC_PATTERN = Object.freeze([
+    { lane: 1, gap: 200 },
+    { lane: 0, gap: 220 },
+    { lane: 2, gap: 180 },
+    { lane: 0, gap: 260 },
+    { lane: 1, gap: 190 },
+    { lane: 2, gap: 240 },
+    { lane: 1, gap: 210 },
+    { lane: 0, gap: 230 },
+    { lane: 2, gap: 200 }
+]);
 
 const carCanvas = document.getElementById("carCanvas");
 const networkCanvas = document.getElementById("networkCanvas");
@@ -24,6 +42,8 @@ networkCanvas.width = 360;
 
 const road = new Road(carCanvas.width / 2, carCanvas.width * 0.9);
 const persistedState = loadTrainingState();
+let trainingSettings = sanitizeTrainingSettings(persistedState.settings);
+let pendingTrainingSettings = { ...trainingSettings };
 
 let generation = persistedState.generation || 1;
 let bestEver = persistedState.bestEver || null;
@@ -36,17 +56,21 @@ let paused = false;
 let ticksPerFrame = 1;
 let forceFinish = false;
 let lastProgressTick = 0;
+let trafficPatternIndex = 0;
+let nextTrafficId = 1;
+let cameraY = 100;
 
 startGeneration(createInitialBrains());
+syncTrainingSettingsControls();
 requestAnimationFrame(animate);
 
 function createInitialBrains() {
     if (!bestEver?.brain) return [];
 
     const brains = [cloneBrain(bestEver.brain)];
-    while (brains.length < CONFIG.populationSize) {
+    while (brains.length < trainingSettings.populationSize) {
         const brain = cloneBrain(bestEver.brain);
-        NeuralNetwork.mutate(brain, CONFIG.mutationAmount);
+        NeuralNetwork.mutate(brain, trainingSettings.mutationAmount);
         brains.push(brain);
     }
     return brains;
@@ -56,10 +80,12 @@ function startGeneration(brains) {
     generationTick = 0;
     forceFinish = false;
     lastProgressTick = 0;
+    trafficPatternIndex = 0;
+    nextTrafficId = 1;
     traffic = createTraffic();
     cars = [];
 
-    for (let index = 0; index < CONFIG.populationSize; index++) {
+    for (let index = 0; index < trainingSettings.populationSize; index++) {
         const car = new Car(road.getLaneCenter(1), 100, 30, 50, "AI");
         if (brains[index]) car.brain = cloneBrain(brains[index]);
 
@@ -81,20 +107,36 @@ function startGeneration(brains) {
     }
 
     bestCar = cars[0];
-    setStatus(`第 ${generation} 代开始，共 ${CONFIG.populationSize} 辆车。`);
+    cameraY = bestCar.y;
+    setStatus(`第 ${generation} 代开始，共 ${trainingSettings.populationSize} 辆车。`);
     updateStats();
 }
 
 function createTraffic() {
-    const positions = [
-        [1, -100],
-        [0, -300], [2, -300],
-        [0, -500], [1, -500],
-        [1, -700], [2, -700]
-    ];
-    return positions.map(([lane, y]) =>
-        new Car(road.getLaneCenter(lane), y, 30, 50, "DUMMY", 2, getRandomColor())
-    );
+    const vehicles = [];
+    let nextY = 100;
+    for (let index = 0; index < CONFIG.trafficCount; index++) {
+        const descriptor = getNextTrafficDescriptor();
+        nextY -= descriptor.gap;
+        const vehicle = new Car(
+            road.getLaneCenter(descriptor.lane),
+            nextY,
+            30,
+            50,
+            "DUMMY",
+            2,
+            getRandomColor()
+        );
+        vehicle.trafficId = nextTrafficId++;
+        vehicles.push(vehicle);
+    }
+    return vehicles;
+}
+
+function getNextTrafficDescriptor() {
+    const descriptor = TRAFFIC_PATTERN[trafficPatternIndex % TRAFFIC_PATTERN.length];
+    trafficPatternIndex++;
+    return descriptor;
 }
 
 function simulateTick() {
@@ -116,8 +158,8 @@ function simulateTick() {
         }
         updateFollowingState(car);
 
-        traffic.forEach((vehicle, index) => {
-            if (car.y < vehicle.y) car.training.overtakenTraffic.add(index);
+        traffic.forEach(vehicle => {
+            if (car.y < vehicle.y) car.training.overtakenTraffic.add(vehicle.trafficId);
         });
         car.training.score = calculateFitness(car);
     }
@@ -125,6 +167,7 @@ function simulateTick() {
     bestCar = cars.reduce((best, car) =>
         car.training.score > best.training.score ? car : best
     );
+    recyclePassedTraffic();
 
     if (aliveVehicleProgressed) {
         lastProgressTick = generationTick;
@@ -132,7 +175,7 @@ function simulateTick() {
 
     const allDamaged = cars.every(car => car.damaged);
     const stagnated = generationTick - lastProgressTick >= CONFIG.stagnationTicks;
-    if (allDamaged || generationTick >= CONFIG.maxTicksPerGeneration || stagnated || forceFinish) {
+    if (allDamaged || generationTick >= trainingSettings.generationTicks || stagnated || forceFinish) {
         const reason = forceFinish
             ? "手动提前结算"
             : allDamaged
@@ -141,6 +184,32 @@ function simulateTick() {
                     ? "连续无前进，自动结束停滞世代"
                     : "达到最大模拟帧数";
         evolveNextGeneration(reason);
+    }
+}
+
+function recyclePassedTraffic() {
+    const aliveCars = cars.filter(car => !car.damaged);
+    if (aliveCars.length === 0) return;
+
+    const leaderY = Math.min(...aliveCars.map(car => car.y));
+    let frontmostTrafficY = Math.min(
+        ...traffic.map(vehicle => vehicle.y),
+        leaderY - CONFIG.trafficRecycleBehindDistance
+    );
+
+    for (const vehicle of traffic) {
+        if (vehicle.y <= leaderY + CONFIG.trafficRecycleBehindDistance) continue;
+
+        const descriptor = getNextTrafficDescriptor();
+        frontmostTrafficY -= descriptor.gap;
+        vehicle.x = road.getLaneCenter(descriptor.lane);
+        vehicle.y = frontmostTrafficY;
+        vehicle.speed = 0;
+        vehicle.angle = 0;
+        vehicle.damaged = false;
+        vehicle.trafficId = nextTrafficId++;
+        // 立即重建碰撞多边形，避免回收发生在绘制前时使用旧位置。
+        vehicle.update(road.borders, []);
     }
 }
 
@@ -205,19 +274,12 @@ function calculateFitness(car) {
     const collisionPenalty = car.damaged ? 150 : 0;
     const followingEliminationPenalty = car.training.eliminatedForFollowing ? 5000 : 0;
     const idlePenalty = car.training.idleTicks * 0.05;
-    const prolongedFollowingTicks = Math.max(
-        0,
-        car.training.longestFollowingTicks - CONFIG.followingGraceTicks
-    );
-    const followingPenalty = car.training.followingTicks * 0.1
-        + prolongedFollowingTicks * 5;
 
-    // 短暂跟车用于观察路况是合理的；持续跟车则会快速失分，不能成为高分亲本。
+    // 跟车过程不重复扣分；达到硬阈值后由淘汰标记一次性施加足够大的惩罚。
     return progressReward + overtakeReward
         - collisionPenalty
         - followingEliminationPenalty
-        - idlePenalty
-        - followingPenalty;
+        - idlePenalty;
 }
 
 function evolveNextGeneration(reason) {
@@ -233,23 +295,31 @@ function evolveNextGeneration(reason) {
         bestEver = { score: championScore, brain: cloneBrain(champion.brain) };
     }
 
+    activatePendingTrainingSettings();
+
+    const targetPopulation = trainingSettings.populationSize;
+    const eliteCount = Math.min(CONFIG.eliteCount, targetPopulation, rankedCars.length);
+    const randomImmigrantCount = Math.min(
+        CONFIG.randomImmigrantCount,
+        targetPopulation - eliteCount
+    );
     const nextBrains = [];
-    for (let index = 0; index < CONFIG.eliteCount; index++) {
+    for (let index = 0; index < eliteCount; index++) {
         nextBrains.push(cloneBrain(rankedCars[index].brain));
     }
 
-    const parentPool = rankedCars.slice(0, CONFIG.parentPoolSize);
-    const inheritedCount = CONFIG.populationSize - CONFIG.randomImmigrantCount;
+    const parentPool = rankedCars.slice(0, Math.min(CONFIG.parentPoolSize, rankedCars.length));
+    const inheritedCount = targetPopulation - randomImmigrantCount;
     while (nextBrains.length < inheritedCount) {
         const parentA = tournamentSelect(parentPool);
         const parentB = tournamentSelect(parentPool);
         const childBrain = crossoverBrains(parentA.brain, parentB.brain);
-        NeuralNetwork.mutate(childBrain, CONFIG.mutationAmount);
+        NeuralNetwork.mutate(childBrain, trainingSettings.mutationAmount);
         nextBrains.push(childBrain);
     }
 
     // 每代保留少量完全随机个体，防止整个种群被坏亲本锁死在同一种行为上。
-    while (nextBrains.length < CONFIG.populationSize) {
+    while (nextBrains.length < targetPopulation) {
         nextBrains.push(new NeuralNetwork([5, 6, 4]));
     }
 
@@ -311,9 +381,10 @@ function animate(time) {
 function drawSimulation(time) {
     carCanvas.height = window.innerHeight;
     networkCanvas.height = window.innerHeight;
+    updateCameraPosition();
 
     carCtx.save();
-    carCtx.translate(0, -bestCar.y + carCanvas.height * 0.7);
+    carCtx.translate(0, -cameraY + carCanvas.height * 0.7);
     road.draw(carCtx);
     traffic.forEach(vehicle => vehicle.draw(carCtx));
 
@@ -327,20 +398,70 @@ function drawSimulation(time) {
     Visualizer.drawNetwork(networkCtx, bestCar.brain);
 }
 
+function updateCameraPosition() {
+    const smoothedTarget = lerp(cameraY, bestCar.y, CONFIG.cameraSmoothing);
+    const requestedStep = smoothedTarget - cameraY;
+    const maxStep = CONFIG.cameraBaseMaxStep * Math.max(1, ticksPerFrame);
+    const limitedStep = Math.max(-maxStep, Math.min(maxStep, requestedStep));
+    cameraY += limitedStep;
+}
+
 function updateStats() {
     const aliveCount = cars.filter(car => !car.damaged).length;
-    const progress = generationTick / CONFIG.maxTicksPerGeneration * 100;
+    const progress = generationTick / trainingSettings.generationTicks * 100;
     document.getElementById("generationValue").textContent = generation;
-    document.getElementById("aliveValue").textContent = `${aliveCount} / ${CONFIG.populationSize}`;
+    document.getElementById("aliveValue").textContent = `${aliveCount} / ${trainingSettings.populationSize}`;
     document.getElementById("progressValue").textContent = `${Math.min(progress, 100).toFixed(1)}%`;
     document.getElementById("currentScoreValue").textContent = formatScore(bestCar?.training.score || 0);
     document.getElementById("bestScoreValue").textContent = formatScore(bestEver?.score || 0);
     document.getElementById("overtakeValue").textContent = bestCar?.training.overtakenTraffic.size || 0;
+    document.getElementById("trafficGeneratedValue").textContent = nextTrafficId - 1;
     document.getElementById("followingValue").textContent = `${bestCar?.training.longestFollowingTicks || 0} 帧`;
     document.getElementById("followingEliminatedValue").textContent = cars.filter(
         car => car.training.eliminatedForFollowing
     ).length;
-    document.getElementById("mutationValue").textContent = CONFIG.mutationAmount.toFixed(2);
+    document.getElementById("mutationValue").textContent = trainingSettings.mutationAmount.toFixed(2);
+}
+
+function applyTrainingSettings() {
+    pendingTrainingSettings = sanitizeTrainingSettings({
+        generationTicks: document.getElementById("generationTicksInput").value,
+        populationSize: document.getElementById("populationSizeInput").value,
+        mutationAmount: document.getElementById("mutationAmountInput").value
+    });
+    syncTrainingSettingsControls(pendingTrainingSettings);
+    setStatus(
+        `参数已保存，将在第 ${generation + 1} 代生效：`
+        + `${pendingTrainingSettings.generationTicks} 帧、`
+        + `${pendingTrainingSettings.populationSize} 辆车、`
+        + `变异 ${pendingTrainingSettings.mutationAmount.toFixed(2)}。`
+    );
+}
+
+function activatePendingTrainingSettings() {
+    trainingSettings = { ...pendingTrainingSettings };
+    syncTrainingSettingsControls();
+}
+
+function sanitizeTrainingSettings(settings = {}) {
+    return {
+        generationTicks: clampNumber(settings.generationTicks, 500, 50000, 5000, true),
+        populationSize: clampNumber(settings.populationSize, 10, 500, 100, true),
+        mutationAmount: clampNumber(settings.mutationAmount, 0, 1, 0.1, false)
+    };
+}
+
+function clampNumber(value, min, max, fallback, integer) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    const clamped = Math.max(min, Math.min(max, parsed));
+    return integer ? Math.round(clamped) : clamped;
+}
+
+function syncTrainingSettingsControls(settings = trainingSettings) {
+    document.getElementById("generationTicksInput").value = settings.generationTicks;
+    document.getElementById("populationSizeInput").value = settings.populationSize;
+    document.getElementById("mutationAmountInput").value = settings.mutationAmount;
 }
 
 function togglePause() {
@@ -384,7 +505,8 @@ function saveTrainingState() {
     localStorage.setItem(CONFIG.storageKey, JSON.stringify({
         generation,
         bestEver,
-        history
+        history,
+        settings: trainingSettings
     }));
 }
 

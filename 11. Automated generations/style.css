@@ -71,8 +71,42 @@ h1 {
     margin-top: 20px;
 }
 
+.training-settings {
+    display: grid;
+    gap: 10px;
+    margin: 20px 0 0;
+    padding: 14px;
+    border: 1px solid #505665;
+    border-radius: 6px;
+}
+
+.training-settings legend {
+    padding: 0 6px;
+    color: #c5cad3;
+}
+
+.training-settings label {
+    display: grid;
+    grid-template-columns: 1fr 90px;
+    align-items: center;
+    gap: 10px;
+    color: #c5cad3;
+    font-size: 14px;
+}
+
+.training-settings input {
+    width: 100%;
+    border: 1px solid #505665;
+    border-radius: 6px;
+    padding: 8px;
+    background: #1d2026;
+    color: inherit;
+    font-variant-numeric: tabular-nums;
+}
+
 button,
-select {
+select,
+input {
     border: 1px solid #505665;
     border-radius: 6px;
     padding: 9px 12px;
@@ -116,4 +150,3 @@ button.danger {
         display: none;
     }
 }
-

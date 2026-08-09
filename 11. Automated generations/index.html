@@ -18,10 +18,27 @@
                 <div><dt>本代最高分</dt><dd id="currentScoreValue">0</dd></div>
                 <div><dt>历史最高分</dt><dd id="bestScoreValue">0</dd></div>
                 <div><dt>最佳车超车数</dt><dd id="overtakeValue">0</dd></div>
+                <div><dt>本代生成交通车</dt><dd id="trafficGeneratedValue">0</dd></div>
                 <div><dt>最长连续跟车</dt><dd id="followingValue">0 帧</dd></div>
                 <div><dt>本代跟车淘汰</dt><dd id="followingEliminatedValue">0</dd></div>
                 <div><dt>变异强度</dt><dd id="mutationValue">0.10</dd></div>
             </dl>
+            <fieldset class="training-settings">
+                <legend>下一代训练参数</legend>
+                <label>
+                    世代长度（帧）
+                    <input id="generationTicksInput" type="number" min="500" max="50000" step="500" value="5000">
+                </label>
+                <label>
+                    车辆数
+                    <input id="populationSizeInput" type="number" min="10" max="500" step="10" value="100">
+                </label>
+                <label>
+                    变异强度
+                    <input id="mutationAmountInput" type="number" min="0" max="1" step="0.01" value="0.1">
+                </label>
+                <button type="button" onclick="applyTrainingSettings()">应用到下一代</button>
+            </fieldset>
             <div class="buttons">
                 <button id="pauseButton" type="button" onclick="togglePause()">暂停</button>
                 <button type="button" onclick="finishGenerationEarly()">提前结束本代</button>
