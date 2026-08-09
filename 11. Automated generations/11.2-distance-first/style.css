@@ -1,0 +1,152 @@
+:root {
+    color-scheme: dark;
+    font-family: "Microsoft YaHei", system-ui, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background: #181a1f;
+    color: #f4f4f5;
+}
+
+.simulation {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    height: 100vh;
+}
+
+#carCanvas {
+    width: 240px;
+    background: #b7b7b7;
+}
+
+#networkCanvas {
+    width: 360px;
+    background: #090a0c;
+}
+
+.control-panel {
+    width: 300px;
+    padding: 22px;
+    overflow-y: auto;
+    background: #24272e;
+    border-inline: 1px solid #363a44;
+}
+
+h1 {
+    margin: 0 0 20px;
+    font-size: 22px;
+}
+
+.stats {
+    margin: 0;
+}
+
+.stats div {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 9px 0;
+    border-bottom: 1px solid #3a3e48;
+}
+
+.stats dt {
+    color: #aeb4c0;
+}
+
+.stats dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.buttons {
+    display: grid;
+    gap: 8px;
+    margin-top: 20px;
+}
+
+.training-settings {
+    display: grid;
+    gap: 10px;
+    margin: 20px 0 0;
+    padding: 14px;
+    border: 1px solid #505665;
+    border-radius: 6px;
+}
+
+.training-settings legend {
+    padding: 0 6px;
+    color: #c5cad3;
+}
+
+.training-settings label {
+    display: grid;
+    grid-template-columns: 1fr 90px;
+    align-items: center;
+    gap: 10px;
+    color: #c5cad3;
+    font-size: 14px;
+}
+
+.training-settings input {
+    width: 100%;
+    border: 1px solid #505665;
+    border-radius: 6px;
+    padding: 8px;
+    background: #1d2026;
+    color: inherit;
+    font-variant-numeric: tabular-nums;
+}
+
+button,
+select,
+input {
+    border: 1px solid #505665;
+    border-radius: 6px;
+    padding: 9px 12px;
+    background: #343945;
+    color: inherit;
+    cursor: pointer;
+}
+
+button:hover,
+select:hover {
+    background: #414754;
+}
+
+button.danger {
+    border-color: #974545;
+    background: #612e32;
+}
+
+.speed-control {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 18px;
+    color: #c5cad3;
+}
+
+.status {
+    min-height: 44px;
+    margin: 20px 0 0;
+    color: #7dd3fc;
+}
+
+.hint {
+    color: #969daa;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+@media (max-width: 850px) {
+    #networkCanvas {
+        display: none;
+    }
+}

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>自动驾驶汽车 - 11.2 距离优先</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="simulation">
+        <canvas id="carCanvas"></canvas>
+        <aside class="control-panel">
+            <h1>11.2 距离优先</h1>
+            <dl class="stats">
+                <div><dt>当前世代</dt><dd id="generationValue">1</dd></div>
+                <div><dt>存活车辆</dt><dd id="aliveValue">0 / 100</dd></div>
+                <div><dt>世代进度</dt><dd id="progressValue">0%</dd></div>
+                <div><dt>本代最远距离</dt><dd id="currentScoreValue">0</dd></div>
+                <div><dt>历史最远距离</dt><dd id="bestScoreValue">0</dd></div>
+                <div><dt>最佳车超车数</dt><dd id="overtakeValue">0</dd></div>
+                <div><dt>本代生成交通车</dt><dd id="trafficGeneratedValue">0</dd></div>
+                <div><dt>变异强度</dt><dd id="mutationValue">0.10</dd></div>
+            </dl>
+            <fieldset class="training-settings">
+                <legend>下一代训练参数</legend>
+                <label>
+                    世代长度（帧）
+                    <input id="generationTicksInput" type="number" min="500" max="50000" step="500" value="5000">
+                </label>
+                <label>
+                    车辆数
+                    <input id="populationSizeInput" type="number" min="10" max="500" step="10" value="100">
+                </label>
+                <label>
+                    变异强度
+                    <input id="mutationAmountInput" type="number" min="0" max="1" step="0.01" value="0.1">
+                </label>
+                <label>
+                    测试车最小速度
+                    <input id="minSpeedInput" type="number" min="0" max="3" step="0.05" value="0">
+                </label>
+                <button type="button" onclick="applyTrainingSettings()">应用到下一代</button>
+            </fieldset>
+            <div class="buttons">
+                <button id="pauseButton" type="button" onclick="togglePause()">暂停</button>
+                <button type="button" onclick="finishGenerationEarly()">提前结束本代</button>
+                <button class="danger" type="button" onclick="resetTraining()">清空训练</button>
+            </div>
+            <label class="speed-control">
+                模拟速度
+                <select id="speedSelect" onchange="setSimulationSpeed(this.value)">
+                    <option value="1">1×</option>
+                    <option value="5">5×</option>
+                    <option value="20">20×</option>
+                </select>
+            </label>
+            <p id="statusText" class="status">正在初始化第一代……</p>
+            <p class="hint">本版本对照第 9 阶段，只按前进距离自动选择亲本，不加入碰撞安全因子。</p>
+        </aside>
+        <canvas id="networkCanvas"></canvas>
+    </main>
+
+    <!-- 复用第 9 阶段稳定的几何、传感器和神经网络实现。 -->
+    <script src="../../9. Fine-tuning/visualizer.js"></script>
+    <script src="../../9. Fine-tuning/network.js"></script>
+    <script src="../../9. Fine-tuning/sensor.js"></script>
+    <script src="../../9. Fine-tuning/utils.js"></script>
+    <script src="../../9. Fine-tuning/road.js"></script>
+    <script src="../../9. Fine-tuning/controls.js"></script>
+    <script src="car.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
