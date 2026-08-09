@@ -2,6 +2,15 @@
 
 ## 当前变更文档
 
+- `workflow/20260809225946-rename-11-1-survival-first.md` - 将 11.1 从纯距离命名调整为更简洁准确的 survival-first；查找当前 11.1 入口时读取。
+- `workflow/20260809225112-migrate-11-1-distance-into-stage-11.md` - 将纯距离 worktree 最新实现移植为第 11 阶段内部的 11.1 探索版本，并补齐缺失文档；运行或维护 11.1 时优先读取。
+- `workflow/20260809205627-remove-following-elimination.md` - 删除长期跟车检测、淘汰及面板统计，车辆仅因碰撞硬淘汰；维护 11.1 当前筛选和淘汰规则时读取。
+- `workflow/20260809203238-fix-zero-minimum-speed-semantics.md` - 修正最小速度 0 仍可倒车的问题，并保留交通车原有倒车下限；理解 11.1 速度下限语义时读取。
+- `workflow/20260809201329-add-minimum-test-car-speed.md` - 为测试车增加默认 0、可配置且随下一代生效的最小速度；调整 11.1 训练车速度下限时读取。
+- `workflow/20260809194712-manage-distance-experiment-with-worktree.md` - 记录纯距离算法曾迁移到独立分支和 worktree 的过程；追溯实验分支来源时读取。
+- `workflow/20260809193328-relocate-11-1-distance-experiment.md` - 记录 11.1 曾移入第 11 阶段并按纯距离特点重命名的过程；追溯目录方案时读取。
+- `workflow/20260809192442-create-11-1-distance-branch.md` - 记录最初从第 11 阶段冻结 11.1 纯距离版本的过程；追溯 11.1 起点时读取。
+- `workflow/20260809182541-simplify-selection-by-distance.md` - 将综合积分简化为“存活优先、距离第二”；理解 11.1 纯距离选择规则时读取。
 - `workflow/20260809175730-document-generation-main.md` - 为第 11 阶段 main.js 补充完整中文分区与算法注释；初次阅读或维护自动训练主流程时优先读取。
 - `workflow/20260809165939-unify-elimination-penalty.md` - 将碰撞与长期跟车淘汰统一为一次性扣 5000 分，避免碰撞车辆凭小额惩罚成为冠军；维护淘汰评分时读取。
 - `workflow/20260809164050-remove-following-score-penalty.md` - 删除持续跟车逐帧扣分，仅保留 300 帧硬淘汰和一次性惩罚；维护适应度时读取。
@@ -20,6 +29,8 @@
 
 ## 关键记忆
 
+- `11. Automated generations/11.1-survival-first/index.html` 是 11.1 生存优先探索入口；其规则是存活车辆绝对优先、同状态比较前进距离，使用 `selfDrivingCarGenerationState11_1DistanceV1` 独立保存训练状态。
+- 11.1 不检测或淘汰长期跟车，只有碰撞会硬淘汰；测试车最小速度可配置为 0～3，设为 0 时允许停车但禁止倒车。
 - 项目没有包管理器和构建步骤，各课程阶段均可独立运行。
 - 推荐从 `11. Automated generations/index.html` 体验自动化训练；原课程内容仍以第 9、10 阶段作为对应实验版本。
 - 可直接打开 HTML，或在项目根目录运行 `python -m http.server 8000` 后通过浏览器访问。
