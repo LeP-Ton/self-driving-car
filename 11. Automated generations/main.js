@@ -1,20 +1,44 @@
+/**
+ * 第 11 阶段：自动世代训练主流程
+ *
+ * 一代的完整生命周期：
+ * 1. startGeneration：根据传入的大脑创建 AI 种群与无限交通流。
+ * 2. simulateTick：推进车辆、记录行为、计算适应度并判断本代是否结束。
+ * 3. evolveNextGeneration：排名、保留精英、选择亲本、交叉、变异并创建下一代。
+ * 4. animate：按面板倍速重复模拟，再统一绘制画面和统计数据。
+ *
+ * 这里的“最佳车”指实时适应度最高的车，不一定是纵向位置最靠前的车。
+ */
+
+// ==================== 固定规则与默认参数 ====================
+
 const CONFIG = Object.freeze({
+    // 排名前 5 的大脑不做变异，原样进入下一代，防止优秀能力丢失。
     eliteCount: 5,
+    // 只有本代前 10 名有资格参与交叉繁殖。
     parentPoolSize: 10,
+    // 每代加入 10 个完全随机大脑，防止种群长期困在同一种策略。
     randomImmigrantCount: 10,
+    // 所有存活车辆连续 180 帧都没有前进时，提前结束本代。
     stagnationTicks: 180,
+    // 只维护固定数量的交通车对象，通过回收位置形成无限交通流。
     trafficCount: 10,
     trafficRecycleBehindDistance: 400,
+    // 镜头使用插值和最大步长限制，减少实时最佳车辆切换造成的抖动。
     cameraSmoothing: 0.15,
     cameraBaseMaxStep: 8,
+    // 跟车检测采用进入/退出两个距离阈值，避免在边界附近反复开始和结束计时。
     followingEnterDistance: 170,
     followingExitDistance: 220,
+    // 连续 60 帧未检测到跟车，才真正结束本次跟车会话。
     followingReleaseTicks: 60,
+    // 累计命中 300 个跟车帧后淘汰车辆，不替神经网络强制选择转向。
     followingEliminationTicks: 300,
-    // V6 使用循环生成的无限交通流，旧版有限场景分数不再具有可比性。
-    storageKey: "selfDrivingCarGenerationStateV6"
+    // V7 统一了碰撞与跟车淘汰惩罚，旧版评分不再具有可比性。
+    storageKey: "selfDrivingCarGenerationStateV7"
 });
 
+// 这三个参数可在面板修改；为保证本代评分公平，只在下一代开始时生效。
 const DEFAULT_TRAINING_SETTINGS = Object.freeze({
     generationTicks: 5000,
     populationSize: 100,
@@ -33,6 +57,8 @@ const TRAFFIC_PATTERN = Object.freeze([
     { lane: 2, gap: 200 }
 ]);
 
+// ==================== 页面对象与运行状态 ====================
+
 const carCanvas = document.getElementById("carCanvas");
 const networkCanvas = document.getElementById("networkCanvas");
 const carCtx = carCanvas.getContext("2d");
@@ -43,8 +69,10 @@ networkCanvas.width = 360;
 const road = new Road(carCanvas.width / 2, carCanvas.width * 0.9);
 const persistedState = loadTrainingState();
 let trainingSettings = sanitizeTrainingSettings(persistedState.settings);
+// 面板修改先写入 pending，换代时再覆盖当前生效参数。
 let pendingTrainingSettings = { ...trainingSettings };
 
+// 世代级状态：刷新页面后，代数、历史最佳和最近成绩会从 localStorage 恢复。
 let generation = persistedState.generation || 1;
 let bestEver = persistedState.bestEver || null;
 let history = persistedState.history || [];
@@ -60,10 +88,18 @@ let trafficPatternIndex = 0;
 let nextTrafficId = 1;
 let cameraY = 100;
 
+// 页面加载后立即创建种群，并启动浏览器动画循环。
 startGeneration(createInitialBrains());
 syncTrainingSettingsControls();
 requestAnimationFrame(animate);
 
+// ==================== 世代初始化 ====================
+
+/**
+ * 页面刷新后创建初始大脑列表。
+ * 第一个个体完整继承历史最佳，其余个体在历史最佳基础上变异。
+ * 没有历史最佳时返回空数组，让 Car 构造函数随机创建第一代大脑。
+ */
 function createInitialBrains() {
     if (!bestEver?.brain) return [];
 
@@ -76,6 +112,10 @@ function createInitialBrains() {
     return brains;
 }
 
+/**
+ * 开始一代训练：重置本代计数，创建交通车和指定数量的 AI 车辆。
+ * @param {Array<object>} brains 上一代产生的大脑；不足的部分使用随机大脑。
+ */
 function startGeneration(brains) {
     generationTick = 0;
     forceFinish = false;
@@ -91,8 +131,10 @@ function startGeneration(brains) {
 
         // 训练元数据不放进 Car 类，避免驾驶模型与世代管理相互耦合。
         car.training = {
+            // startY 用于累计前进距离；lastProgressY 用于判断种群是否停滞。
             startY: car.y,
             lastProgressY: car.y,
+            // 闲置、跟车、超车等行为会参与淘汰或适应度计算。
             aliveTicks: 0,
             idleTicks: 0,
             followingTicks: 0,
@@ -112,6 +154,7 @@ function startGeneration(brains) {
     updateStats();
 }
 
+/** 创建本代初始交通车，并为每次可计分的超车事件分配唯一 ID。 */
 function createTraffic() {
     const vehicles = [];
     let nextY = 100;
@@ -133,12 +176,19 @@ function createTraffic() {
     return vehicles;
 }
 
+/** 按固定循环取出下一辆交通车的车道和间距，使不同世代路况可复现。 */
 function getNextTrafficDescriptor() {
     const descriptor = TRAFFIC_PATTERN[trafficPatternIndex % TRAFFIC_PATTERN.length];
     trafficPatternIndex++;
     return descriptor;
 }
 
+// ==================== 单帧模拟与本代结束条件 ====================
+
+/**
+ * 推进一个模拟帧。
+ * 更新顺序很重要：先移动交通车，再移动所有 AI，随后评分、回收交通车并判断换代。
+ */
 function simulateTick() {
     generationTick++;
     let aliveVehicleProgressed = false;
@@ -158,12 +208,14 @@ function simulateTick() {
         }
         updateFollowingState(car);
 
+        // Set 以唯一 trafficId 去重，同一辆交通车在一次回收周期内只计一次超车。
         traffic.forEach(vehicle => {
             if (car.y < vehicle.y) car.training.overtakenTraffic.add(vehicle.trafficId);
         });
         car.training.score = calculateFitness(car);
     }
 
+    // 实时最佳按综合适应度选择，因此超车、碰撞时可能切换，并非单纯选择最靠前车辆。
     bestCar = cars.reduce((best, car) =>
         car.training.score > best.training.score ? car : best
     );
@@ -173,6 +225,7 @@ function simulateTick() {
         lastProgressTick = generationTick;
     }
 
+    // 本代有四种结束方式：全员淘汰、到达帧上限、持续停滞、用户手动结束。
     const allDamaged = cars.every(car => car.damaged);
     const stagnated = generationTick - lastProgressTick >= CONFIG.stagnationTicks;
     if (allDamaged || generationTick >= trainingSettings.generationTicks || stagnated || forceFinish) {
@@ -187,6 +240,12 @@ function simulateTick() {
     }
 }
 
+// ==================== 无限交通、进展与跟车规则 ====================
+
+/**
+ * 将已经落后领先 AI 的交通车移动到队列最前方。
+ * 复用对象可保持内存稳定；分配新 trafficId 可让它再次作为新超车事件计分。
+ */
 function recyclePassedTraffic() {
     const aliveCars = cars.filter(car => !car.damaged);
     if (aliveCars.length === 0) return;
@@ -213,6 +272,10 @@ function recyclePassedTraffic() {
     }
 }
 
+/**
+ * 判断一辆存活车辆是否相对自身记录继续向前。
+ * 不与已撞毁领先车的历史位置比较，避免追赶过程被误判为全体停滞。
+ */
 function recordAliveProgress(car) {
     if (car.damaged) return false;
 
@@ -224,6 +287,11 @@ function recordAliveProgress(car) {
     return false;
 }
 
+/**
+ * 更新跟车会话。
+ * 进入阈值较小、退出阈值较大，并允许短暂丢失目标，称为“滞回检测”。
+ * 跟车过程不逐帧扣分；累计命中 300 帧时直接淘汰。
+ */
 function updateFollowingState(car) {
     if (car.damaged) {
         car.training.consecutiveFollowingTicks = 0;
@@ -267,21 +335,34 @@ function updateFollowingState(car) {
     }
 }
 
+// ==================== 适应度与遗传算法 ====================
+
+/**
+ * 计算适应度（越高越好）：
+ * 前进距离 × 2 + 超车数量 × 1000 - 终止型失败 5000 - 闲置帧数 × 0.05。
+ * 撞道路、撞交通车、长期跟车淘汰都通过 damaged 统一扣一次 5000。
+ */
 function calculateFitness(car) {
     const progress = car.training.startY - car.y;
     const progressReward = progress * 2;
     const overtakeReward = car.training.overtakenTraffic.size * 1000;
-    const collisionPenalty = car.damaged ? 150 : 0;
-    const followingEliminationPenalty = car.training.eliminatedForFollowing ? 5000 : 0;
+    // 撞击与长期跟车都属于终止型失败，统一只扣一次，避免失败类型导致重复计分。
+    const eliminationPenalty = car.damaged ? 5000 : 0;
     const idlePenalty = car.training.idleTicks * 0.05;
 
     // 跟车过程不重复扣分；达到硬阈值后由淘汰标记一次性施加足够大的惩罚。
     return progressReward + overtakeReward
-        - collisionPenalty
-        - followingEliminationPenalty
+        - eliminationPenalty
         - idlePenalty;
 }
 
+/**
+ * 结算本代并生成下一代：
+ * 1. 按适应度排名并保存本代冠军。
+ * 2. 原样保留精英。
+ * 3. 从前 10 名中选择两个亲本，交叉大脑后执行随机变异。
+ * 4. 用完全随机个体补足种群多样性。
+ */
 function evolveNextGeneration(reason) {
     const rankedCars = [...cars].sort(
         (left, right) => right.training.score - left.training.score
@@ -329,8 +410,11 @@ function evolveNextGeneration(reason) {
     setStatus(`第 ${generation - 1} 代因“${reason}”结束，冠军得分 ${formatScore(championScore)}；已进入第 ${generation} 代。`);
 }
 
+/**
+ * 锦标赛选择：随机抽取三个候选，返回其中得分最高者。
+ * 它让高分车辆更容易成为亲本，同时不给第一名绝对垄断权。
+ */
 function tournamentSelect(parentPool) {
-    // 随机抽取三个候选，选择其中得分最高者，兼顾择优和种群多样性。
     const candidates = Array.from({ length: 3 }, () =>
         parentPool[Math.floor(Math.random() * parentPool.length)]
     );
@@ -339,6 +423,10 @@ function tournamentSelect(parentPool) {
     );
 }
 
+/**
+ * 双亲交叉：子代每一个权重和偏置都以 50% 概率继承父本 A 或父本 B。
+ * 返回交叉后的新对象，不直接修改两个亲本。
+ */
 function crossoverBrains(parentA, parentB) {
     const child = cloneBrain(parentA);
     child.levels.forEach((level, levelIndex) => {
@@ -356,10 +444,14 @@ function crossoverBrains(parentA, parentB) {
     return child;
 }
 
+/** 深拷贝大脑，防止子代变异反向修改亲本或精英。 */
 function cloneBrain(brain) {
     return JSON.parse(JSON.stringify(brain));
 }
 
+// ==================== 动画与绘制 ====================
+
+/** 浏览器动画入口：根据倍速执行若干模拟帧，然后只绘制一次。 */
 function animate(time) {
     if (!paused) {
         for (let tick = 0; tick < ticksPerFrame; tick++) {
@@ -378,6 +470,7 @@ function animate(time) {
     requestAnimationFrame(animate);
 }
 
+/** 绘制道路、交通车、AI 种群、最佳车传感器和最佳车神经网络。 */
 function drawSimulation(time) {
     carCanvas.height = window.innerHeight;
     networkCanvas.height = window.innerHeight;
@@ -398,6 +491,7 @@ function drawSimulation(time) {
     Visualizer.drawNetwork(networkCtx, bestCar.brain);
 }
 
+/** 平滑追踪实时最佳车辆，并限制单次位移，避免最佳车切换造成整屏跳动。 */
 function updateCameraPosition() {
     const smoothedTarget = lerp(cameraY, bestCar.y, CONFIG.cameraSmoothing);
     const requestedStep = smoothedTarget - cameraY;
@@ -406,6 +500,9 @@ function updateCameraPosition() {
     cameraY += limitedStep;
 }
 
+// ==================== 面板交互与训练参数 ====================
+
+/** 将当前世代状态同步到右侧控制面板。 */
 function updateStats() {
     const aliveCount = cars.filter(car => !car.damaged).length;
     const progress = generationTick / trainingSettings.generationTicks * 100;
@@ -423,6 +520,7 @@ function updateStats() {
     document.getElementById("mutationValue").textContent = trainingSettings.mutationAmount.toFixed(2);
 }
 
+/** 读取并校验用户输入，只保存为下一代待生效参数。 */
 function applyTrainingSettings() {
     pendingTrainingSettings = sanitizeTrainingSettings({
         generationTicks: document.getElementById("generationTicksInput").value,
@@ -438,11 +536,13 @@ function applyTrainingSettings() {
     );
 }
 
+/** 换代时激活待生效参数，保证同一代始终使用同一套评测规则。 */
 function activatePendingTrainingSettings() {
     trainingSettings = { ...pendingTrainingSettings };
     syncTrainingSettingsControls();
 }
 
+/** 将外部或本地存储中的训练参数限制到面板声明的安全范围。 */
 function sanitizeTrainingSettings(settings = {}) {
     return {
         generationTicks: clampNumber(settings.generationTicks, 500, 50000, 5000, true),
@@ -451,6 +551,7 @@ function sanitizeTrainingSettings(settings = {}) {
     };
 }
 
+/** 将输入转换为指定范围内的数字；无效值回退到默认值。 */
 function clampNumber(value, min, max, fallback, integer) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return fallback;
@@ -458,28 +559,33 @@ function clampNumber(value, min, max, fallback, integer) {
     return integer ? Math.round(clamped) : clamped;
 }
 
+/** 把校验后的值写回输入框，让用户看到最终实际采用的参数。 */
 function syncTrainingSettingsControls(settings = trainingSettings) {
     document.getElementById("generationTicksInput").value = settings.generationTicks;
     document.getElementById("populationSizeInput").value = settings.populationSize;
     document.getElementById("mutationAmountInput").value = settings.mutationAmount;
 }
 
+/** 暂停或恢复模拟；绘制循环仍保持运行。 */
 function togglePause() {
     paused = !paused;
     document.getElementById("pauseButton").textContent = paused ? "继续" : "暂停";
     setStatus(paused ? "训练已暂停。" : `第 ${generation} 代继续训练。`);
 }
 
+/** 标记手动结算，请求会在下一个模拟帧中统一处理。 */
 function finishGenerationEarly() {
     forceFinish = true;
     setStatus(`正在提前结算第 ${generation} 代……`);
 }
 
+/** 设置每个浏览器动画帧要执行的模拟帧数量。 */
 function setSimulationSpeed(value) {
     ticksPerFrame = Math.max(1, Number(value) || 1);
     setStatus(`模拟速度已切换为 ${ticksPerFrame}×。`);
 }
 
+/** 清空 V7 训练进度并以当前生效参数重新创建随机第一代。 */
 function resetTraining() {
     const confirmed = window.confirm("确定清空代数、历史最高分和已保存的大脑吗？");
     if (!confirmed) return;
@@ -492,6 +598,9 @@ function resetTraining() {
     setStatus("训练数据已清空，已重新生成随机第一代。 ");
 }
 
+// ==================== 本地持久化与通用显示 ====================
+
+/** 从 localStorage 恢复代数、冠军大脑、历史成绩和训练参数。 */
 function loadTrainingState() {
     try {
         return JSON.parse(localStorage.getItem(CONFIG.storageKey)) || {};
@@ -501,6 +610,7 @@ function loadTrainingState() {
     }
 }
 
+/** 每代结束时保存可跨刷新继续使用的最小训练状态。 */
 function saveTrainingState() {
     localStorage.setItem(CONFIG.storageKey, JSON.stringify({
         generation,
@@ -510,10 +620,12 @@ function saveTrainingState() {
     }));
 }
 
+/** 显示最近一次训练事件或用户操作结果。 */
 function setStatus(message) {
     document.getElementById("statusText").textContent = message;
 }
 
+/** 所有分数统一显示一位小数。 */
 function formatScore(score) {
     return Number(score).toFixed(1);
 }
