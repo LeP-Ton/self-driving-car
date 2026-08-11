@@ -2,6 +2,7 @@
 
 ## 当前变更文档
 
+- `workflow/20260809234810-update-11-1-11-2-training-defaults.md` - 将 11.1、11.2 默认世代长度改为 10000，默认最小速度改为 2；核对实验默认参数时读取。
 - `workflow/20260809233200-add-11-2-distance-first.md` - 以 11.1 为对照创建只按距离选择的 11.2，对齐第 9 阶段最靠前车辆规则；比较生存优先与距离优先时读取。
 - `workflow/20260809225946-rename-11-1-survival-first.md` - 将 11.1 从纯距离命名调整为更简洁准确的 survival-first；查找当前 11.1 入口时读取。
 - `workflow/20260809225112-migrate-11-1-distance-into-stage-11.md` - 将纯距离 worktree 最新实现移植为第 11 阶段内部的 11.1 探索版本，并补齐缺失文档；运行或维护 11.1 时优先读取。
@@ -30,6 +31,7 @@
 
 ## 关键记忆
 
+- 11.1 与 11.2 默认每代运行 10000 帧，测试车默认最小速度为 2；localStorage 中已有设置优先，清空训练后才会恢复新默认值。
 - `11. Automated generations/11.2-distance-first/index.html` 是 11.2 距离优先入口；实时最佳、亲本和历史最佳只比较前进距离，完全不把碰撞状态作为安全因子，使用 `selfDrivingCarGenerationState11_2DistanceFirstV1` 独立保存训练状态。
 - `11. Automated generations/11.1-survival-first/index.html` 是 11.1 生存优先探索入口；其规则是存活车辆绝对优先、同状态比较前进距离，使用 `selfDrivingCarGenerationState11_1DistanceV1` 独立保存训练状态。
 - 11.1 不检测或淘汰长期跟车，只有碰撞会硬淘汰；测试车最小速度可配置为 0～3，设为 0 时允许停车但禁止倒车。

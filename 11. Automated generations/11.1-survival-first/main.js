@@ -33,10 +33,10 @@ const CONFIG = Object.freeze({
 
 // 这些参数可在面板修改；为保证本代评分公平，只在下一代开始时生效。
 const DEFAULT_TRAINING_SETTINGS = Object.freeze({
-    generationTicks: 5000,
+    generationTicks: 10000,
     populationSize: 100,
     mutationAmount: 0.1,
-    minSpeed: 0
+    minSpeed: 2
 });
 
 const TRAFFIC_PATTERN = Object.freeze([
@@ -503,10 +503,10 @@ function activatePendingTrainingSettings() {
 /** 将外部或本地存储中的训练参数限制到面板声明的安全范围。 */
 function sanitizeTrainingSettings(settings = {}) {
     return {
-        generationTicks: clampNumber(settings.generationTicks, 500, 50000, 5000, true),
+        generationTicks: clampNumber(settings.generationTicks, 500, 50000, 10000, true),
         populationSize: clampNumber(settings.populationSize, 10, 500, 100, true),
         mutationAmount: clampNumber(settings.mutationAmount, 0, 1, 0.1, false),
-        minSpeed: clampNumber(settings.minSpeed, 0, 3, 0, false)
+        minSpeed: clampNumber(settings.minSpeed, 0, 3, 2, false)
     };
 }
 
