@@ -2,6 +2,7 @@
 
 ## 当前变更文档
 
+- `workflow/20260811201442-add-11-3-comfort-first.md` - 新增按安全、舒适、距离选择亲本的 11.3，并记录四项等权舒适度算法；理解或维护舒适训练时读取。
 - `workflow/20260809234810-update-11-1-11-2-training-defaults.md` - 将 11.1、11.2 默认世代长度改为 10000，默认最小速度改为 2；核对实验默认参数时读取。
 - `workflow/20260809233200-add-11-2-distance-first.md` - 以 11.1 为对照创建只按距离选择的 11.2，对齐第 9 阶段最靠前车辆规则；比较生存优先与距离优先时读取。
 - `workflow/20260809225946-rename-11-1-survival-first.md` - 将 11.1 从纯距离命名调整为更简洁准确的 survival-first；查找当前 11.1 入口时读取。
@@ -31,6 +32,8 @@
 
 ## 关键记忆
 
+- `11. Automated generations/11.3-comfort-first/index.html` 是 11.3 舒适优先入口；存活车先比平均舒适成本再比距离，全员碰撞时先比距离，使用 `selfDrivingCarGenerationState11_3ComfortFirstV1` 独立保存训练状态。
+- 11.3 前 10 帧不采样舒适度；此后将纵向加速度、纵向冲击、横向加速度代理和转向突变归一化后各占 25%，面板以 `100 / (1 + 平均成本)` 显示舒适度。
 - 11.1 与 11.2 默认每代运行 10000 帧，测试车默认最小速度为 2；localStorage 中已有设置优先，清空训练后才会恢复新默认值。
 - `11. Automated generations/11.2-distance-first/index.html` 是 11.2 距离优先入口；实时最佳、亲本和历史最佳只比较前进距离，完全不把碰撞状态作为安全因子，使用 `selfDrivingCarGenerationState11_2DistanceFirstV1` 独立保存训练状态。
 - `11. Automated generations/11.1-survival-first/index.html` 是 11.1 生存优先探索入口；其规则是存活车辆绝对优先、同状态比较前进距离，使用 `selfDrivingCarGenerationState11_1DistanceV1` 独立保存训练状态。
