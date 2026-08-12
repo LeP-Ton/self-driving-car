@@ -21,8 +21,9 @@ const CONFIG = Object.freeze({
     randomImmigrantCount: 10,
     // 所有存活车辆连续 180 帧都没有前进时，提前结束本代。
     stagnationTicks: 180,
-    // 只维护固定数量的交通车对象，通过回收位置形成无限交通流。
+    // 领先区域至少保留 10 辆交通车；车队拉长时允许临时增加，避免后车眼前的障碍被提前回收。
     trafficCount: 10,
+    // 交通车落到最后方存活测试车后 400 像素，才允许进入对象池等待复用。
     trafficRecycleBehindDistance: 400,
     // 镜头使用插值和最大步长限制，减少实时最佳车辆切换造成的抖动。
     cameraSmoothing: 0.15,
@@ -80,6 +81,8 @@ let bestEver = persistedState.bestEver || null;
 let history = persistedState.history || [];
 let cars = [];
 let traffic = [];
+// 已彻底离开整个测试车队的交通车进入对象池，后续补充前方车流时优先复用。
+let trafficPool = [];
 let generationTick = 0;
 let bestCar = null;
 let paused = false;
@@ -124,6 +127,7 @@ function startGeneration(brains) {
     lastProgressTick = 0;
     trafficPatternIndex = 0;
     nextTrafficId = 1;
+    trafficPool = [];
     traffic = createTraffic();
     cars = [];
 
@@ -174,19 +178,39 @@ function createTraffic() {
     for (let index = 0; index < CONFIG.trafficCount; index++) {
         const descriptor = getNextTrafficDescriptor();
         nextY -= descriptor.gap;
-        const vehicle = new Car(
-            road.getLaneCenter(descriptor.lane),
-            nextY,
-            30,
-            50,
-            "DUMMY",
-            2,
-            getRandomColor()
-        );
-        vehicle.trafficId = nextTrafficId++;
-        vehicles.push(vehicle);
+        vehicles.push(placeTrafficVehicle(descriptor, nextY));
     }
     return vehicles;
+}
+
+/**
+ * 从对象池取得一辆交通车并放到指定位置；池为空时才创建新对象。
+ * 每次重新进入车流都会分配新 ID，使同一对象的新一轮超车可以独立计数。
+ */
+function placeTrafficVehicle(descriptor, y) {
+    const vehicle = trafficPool.pop() || new Car(
+        road.getLaneCenter(descriptor.lane),
+        y,
+        30,
+        50,
+        "DUMMY",
+        2,
+        getRandomColor()
+    );
+    vehicle.x = road.getLaneCenter(descriptor.lane);
+    vehicle.y = y;
+    vehicle.speed = 0;
+    vehicle.angle = 0;
+    vehicle.damaged = false;
+    vehicle.trafficId = nextTrafficId++;
+    // 临时关闭控制输入再更新，只重建当前位置的多边形，不让车辆在放置过程中额外移动。
+    vehicle.controls.forward = false;
+    vehicle.controls.left = false;
+    vehicle.controls.right = false;
+    vehicle.controls.reverse = false;
+    vehicle.update(road.borders, []);
+    vehicle.controls.forward = true;
+    return vehicle;
 }
 
 /** 按固定循环取出下一辆交通车的车道和间距，使不同世代路况可复现。 */
@@ -200,7 +224,7 @@ function getNextTrafficDescriptor() {
 
 /**
  * 推进一个模拟帧。
- * 更新顺序很重要：先移动交通车，再移动所有 AI，随后评分、回收交通车并判断换代。
+ * 更新顺序很重要：先移动交通车，再移动所有 AI，随后评分、维护交通流并判断换代。
  */
 function simulateTick() {
     generationTick++;
@@ -227,7 +251,7 @@ function simulateTick() {
     bestCar = cars.reduce((best, car) =>
         compareCarsForSelection(car, best) > 0 ? car : best
     );
-    recyclePassedTraffic();
+    maintainInfiniteTraffic();
 
     if (aliveVehicleProgressed) {
         lastProgressTick = generationTick;
@@ -251,32 +275,46 @@ function simulateTick() {
 // ==================== 无限交通与进展规则 ====================
 
 /**
- * 将已经落后领先 AI 的交通车移动到队列最前方。
- * 复用对象可保持内存稳定；分配新 trafficId 可让它再次作为新超车事件计分。
+ * 维护覆盖整个存活测试车队的无限交通流：
+ * 1. 只有落到最后方测试车后方足够远的交通车，才退出活动车流并进入对象池。
+ * 2. 领先区域不足目标数量时，在车流最前方补车，并优先复用对象池中的车辆。
+ *
+ * “最后方回收、最前方补充”刻意使用不同基准，避免领先的非最佳车把后方最佳车
+ * 尚未遇到的障碍提前挪走。测试车队伍跨度较大时，活动交通车数量会暂时超过 10 辆。
  */
-function recyclePassedTraffic() {
+function maintainInfiniteTraffic() {
     const aliveCars = cars.filter(car => !car.damaged);
     if (aliveCars.length === 0) return;
 
-    const leaderY = Math.min(...aliveCars.map(car => car.y));
+    const frontmostCarY = Math.min(...aliveCars.map(car => car.y));
+    const rearmostCarY = Math.max(...aliveCars.map(car => car.y));
+
+    // 先回收已经落到所有存活测试车后方的交通车；仍可能被任一测试车遇到的车必须保留。
+    const activeTraffic = [];
+    for (const vehicle of traffic) {
+        if (vehicle.y > rearmostCarY + CONFIG.trafficRecycleBehindDistance) {
+            trafficPool.push(vehicle);
+        } else {
+            activeTraffic.push(vehicle);
+        }
+    }
+    traffic = activeTraffic;
+
+    // 行驶方向朝向更小的 y；这里只统计真正位于最靠前测试车前方的交通车。
+    // 落在领先车后方的车辆即使距离很近，也仍然只服务后车，不能抵扣前方补车数量。
+    let trafficAheadCount = traffic.filter(vehicle =>
+        vehicle.y < frontmostCarY
+    ).length;
     let frontmostTrafficY = Math.min(
         ...traffic.map(vehicle => vehicle.y),
-        leaderY - CONFIG.trafficRecycleBehindDistance
+        frontmostCarY - CONFIG.trafficRecycleBehindDistance
     );
 
-    for (const vehicle of traffic) {
-        if (vehicle.y <= leaderY + CONFIG.trafficRecycleBehindDistance) continue;
-
+    while (trafficAheadCount < CONFIG.trafficCount) {
         const descriptor = getNextTrafficDescriptor();
         frontmostTrafficY -= descriptor.gap;
-        vehicle.x = road.getLaneCenter(descriptor.lane);
-        vehicle.y = frontmostTrafficY;
-        vehicle.speed = 0;
-        vehicle.angle = 0;
-        vehicle.damaged = false;
-        vehicle.trafficId = nextTrafficId++;
-        // 立即重建碰撞多边形，避免回收发生在绘制前时使用旧位置。
-        vehicle.update(road.borders, []);
+        traffic.push(placeTrafficVehicle(descriptor, frontmostTrafficY));
+        trafficAheadCount++;
     }
 }
 
