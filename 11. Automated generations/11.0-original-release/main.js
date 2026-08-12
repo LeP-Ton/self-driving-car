@@ -67,6 +67,13 @@ carCanvas.width = 240;
 networkCanvas.width = 360;
 
 const road = new Road(carCanvas.width / 2, carCanvas.width * 0.9);
+const trafficManager = new InfiniteTrafficManager({
+    minimumAheadCount: CONFIG.trafficCount,
+    recycleBehindDistance: CONFIG.trafficRecycleBehindDistance,
+    trafficPattern: TRAFFIC_PATTERN,
+    getLaneCenter: lane => road.getLaneCenter(lane),
+    createVehicle: (x, y) => new Car(x, y, 30, 50, "DUMMY", 2, getRandomColor())
+});
 const persistedState = loadTrainingState();
 let trainingSettings = sanitizeTrainingSettings(persistedState.settings);
 // 面板修改先写入 pending，换代时再覆盖当前生效参数。
@@ -84,8 +91,6 @@ let paused = false;
 let ticksPerFrame = 1;
 let forceFinish = false;
 let lastProgressTick = 0;
-let trafficPatternIndex = 0;
-let nextTrafficId = 1;
 let cameraY = 100;
 
 // 页面加载后立即创建种群，并启动浏览器动画循环。
@@ -120,9 +125,7 @@ function startGeneration(brains) {
     generationTick = 0;
     forceFinish = false;
     lastProgressTick = 0;
-    trafficPatternIndex = 0;
-    nextTrafficId = 1;
-    traffic = createTraffic();
+    traffic = trafficManager.reset(100);
     cars = [];
 
     for (let index = 0; index < trainingSettings.populationSize; index++) {
@@ -152,35 +155,6 @@ function startGeneration(brains) {
     cameraY = bestCar.y;
     setStatus(`第 ${generation} 代开始，共 ${trainingSettings.populationSize} 辆车。`);
     updateStats();
-}
-
-/** 创建本代初始交通车，并为每次可计分的超车事件分配唯一 ID。 */
-function createTraffic() {
-    const vehicles = [];
-    let nextY = 100;
-    for (let index = 0; index < CONFIG.trafficCount; index++) {
-        const descriptor = getNextTrafficDescriptor();
-        nextY -= descriptor.gap;
-        const vehicle = new Car(
-            road.getLaneCenter(descriptor.lane),
-            nextY,
-            30,
-            50,
-            "DUMMY",
-            2,
-            getRandomColor()
-        );
-        vehicle.trafficId = nextTrafficId++;
-        vehicles.push(vehicle);
-    }
-    return vehicles;
-}
-
-/** 按固定循环取出下一辆交通车的车道和间距，使不同世代路况可复现。 */
-function getNextTrafficDescriptor() {
-    const descriptor = TRAFFIC_PATTERN[trafficPatternIndex % TRAFFIC_PATTERN.length];
-    trafficPatternIndex++;
-    return descriptor;
 }
 
 // ==================== 单帧模拟与本代结束条件 ====================
@@ -219,7 +193,7 @@ function simulateTick() {
     bestCar = cars.reduce((best, car) =>
         car.training.score > best.training.score ? car : best
     );
-    recyclePassedTraffic();
+    traffic = trafficManager.maintain(cars.filter(car => !car.damaged));
 
     if (aliveVehicleProgressed) {
         lastProgressTick = generationTick;
@@ -241,36 +215,6 @@ function simulateTick() {
 }
 
 // ==================== 无限交通、进展与跟车规则 ====================
-
-/**
- * 将已经落后领先 AI 的交通车移动到队列最前方。
- * 复用对象可保持内存稳定；分配新 trafficId 可让它再次作为新超车事件计分。
- */
-function recyclePassedTraffic() {
-    const aliveCars = cars.filter(car => !car.damaged);
-    if (aliveCars.length === 0) return;
-
-    const leaderY = Math.min(...aliveCars.map(car => car.y));
-    let frontmostTrafficY = Math.min(
-        ...traffic.map(vehicle => vehicle.y),
-        leaderY - CONFIG.trafficRecycleBehindDistance
-    );
-
-    for (const vehicle of traffic) {
-        if (vehicle.y <= leaderY + CONFIG.trafficRecycleBehindDistance) continue;
-
-        const descriptor = getNextTrafficDescriptor();
-        frontmostTrafficY -= descriptor.gap;
-        vehicle.x = road.getLaneCenter(descriptor.lane);
-        vehicle.y = frontmostTrafficY;
-        vehicle.speed = 0;
-        vehicle.angle = 0;
-        vehicle.damaged = false;
-        vehicle.trafficId = nextTrafficId++;
-        // 立即重建碰撞多边形，避免回收发生在绘制前时使用旧位置。
-        vehicle.update(road.borders, []);
-    }
-}
 
 /**
  * 判断一辆存活车辆是否相对自身记录继续向前。
@@ -512,7 +456,8 @@ function updateStats() {
     document.getElementById("currentScoreValue").textContent = formatScore(bestCar?.training.score || 0);
     document.getElementById("bestScoreValue").textContent = formatScore(bestEver?.score || 0);
     document.getElementById("overtakeValue").textContent = bestCar?.training.overtakenTraffic.size || 0;
-    document.getElementById("trafficGeneratedValue").textContent = nextTrafficId - 1;
+    document.getElementById("trafficGeneratedValue").textContent =
+        trafficManager.getStats().generatedEventCount;
     document.getElementById("followingValue").textContent = `${bestCar?.training.longestFollowingTicks || 0} 帧`;
     document.getElementById("followingEliminatedValue").textContent = cars.filter(
         car => car.training.eliminatedForFollowing
