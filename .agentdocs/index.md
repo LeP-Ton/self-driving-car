@@ -2,6 +2,8 @@
 
 ## 当前变更文档
 
+- `workflow/20260812220957-rename-11-0-original-release.md` - 将缺少语义后缀的 11.0 重命名为 11.0-original-release，并同步入口展示和当前项目认知；查找原始综合积分版本时读取。
+- `workflow/20260812220411-organize-stage-11-0-directory.md` - 将第 11 阶段根目录的综合积分主版本迁入 11.0，修正第 9 阶段资源相对路径并统一 11.0～11.3 目录结构；启动或维护综合积分版本时读取。
 - `workflow/20260812214010-extract-shared-infinite-traffic-manager.md` - 抽取第 11 阶段通用无限交通管理器并让 11.3 首次接入，保持最后方回收与前方补足行为不变；迁移其他子版本或维护交通生命周期时读取。
 - `workflow/20260812091837-fix-11-3-ahead-traffic-count.md` - 修正 11.3 前方交通计数，只让真正位于最靠前测试车前方的障碍车抵扣 10 辆保障数量；排查领先车前方无障碍或维护补车条件时读取。
 - `workflow/20260812083138-fix-11-3-shared-traffic-recycling.md` - 将 11.3 无限交通改为最后方回收、最前方按需补充，防止领先的非最佳车提前移走后方最佳车仍需面对的障碍；排查障碍车消失或维护动态交通池时读取。
@@ -44,7 +46,7 @@
 - `11. Automated generations/11.1-survival-first/index.html` 是 11.1 生存优先探索入口；其规则是存活车辆绝对优先、同状态比较前进距离，使用 `selfDrivingCarGenerationState11_1DistanceV1` 独立保存训练状态。
 - 11.1 不检测或淘汰长期跟车，只有碰撞会硬淘汰；测试车最小速度可配置为 0～3，设为 0 时允许停车但禁止倒车。
 - 项目没有包管理器和构建步骤，各课程阶段均可独立运行。
-- 推荐从 `11. Automated generations/index.html` 体验自动化训练；原课程内容仍以第 9、10 阶段作为对应实验版本。
+- `11. Automated generations/11.0-original-release/index.html` 是原始综合积分自动训练入口；第 11 阶段各版本目录均使用“版本号-语义名称”，根目录不再直接放置运行文件。
 - 可直接打开 HTML，或在项目根目录运行 `python -m http.server 8000` 后通过浏览器访问。
 - 第 11 阶段每代 100 辆车，最多运行 5000 帧；保留前 5 名精英，从前 10 名中选择亲本并交叉，其余个体使用 `0.1` 强度变异。
 - 第 11 阶段使用独立的 `localStorage` 键 `selfDrivingCarGenerationStateV7`，不会覆盖第 9 阶段的 `bestBrain`；旧版不同淘汰评分不再加载。

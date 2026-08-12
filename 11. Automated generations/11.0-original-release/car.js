@@ -21,7 +21,7 @@ class Car {
 
         this.img = new Image();
         // 图片仍由第 9 阶段提供，避免为了世代管理复制无关的二进制资源。
-        this.img.src = "../9. Fine-tuning/car.png";
+        this.img.src = "../../9. Fine-tuning/car.png";
         this.mask = document.createElement("canvas");
         this.mask.width = width;
         this.mask.height = height;
@@ -131,4 +131,3 @@ class Car {
         ctx.restore();
     }
 }
-
