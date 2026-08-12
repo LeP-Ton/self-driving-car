@@ -70,6 +70,14 @@ carCanvas.width = 240;
 networkCanvas.width = 360;
 
 const road = new Road(carCanvas.width / 2, carCanvas.width * 0.9);
+// 交通管理器只接管对象生命周期；哪些测试车参与覆盖范围仍由本阶段决定。
+const trafficManager = new InfiniteTrafficManager({
+    minimumAheadCount: CONFIG.trafficCount,
+    recycleBehindDistance: CONFIG.trafficRecycleBehindDistance,
+    trafficPattern: TRAFFIC_PATTERN,
+    getLaneCenter: lane => road.getLaneCenter(lane),
+    createVehicle: (x, y) => new Car(x, y, 30, 50, "DUMMY", 2, getRandomColor())
+});
 const persistedState = loadTrainingState();
 let trainingSettings = sanitizeTrainingSettings(persistedState.settings);
 // 面板修改先写入 pending，换代时再覆盖当前生效参数。
@@ -81,16 +89,12 @@ let bestEver = persistedState.bestEver || null;
 let history = persistedState.history || [];
 let cars = [];
 let traffic = [];
-// 已彻底离开整个测试车队的交通车进入对象池，后续补充前方车流时优先复用。
-let trafficPool = [];
 let generationTick = 0;
 let bestCar = null;
 let paused = false;
 let ticksPerFrame = 1;
 let forceFinish = false;
 let lastProgressTick = 0;
-let trafficPatternIndex = 0;
-let nextTrafficId = 1;
 let cameraY = 100;
 
 // 页面加载后立即创建种群，并启动浏览器动画循环。
@@ -125,10 +129,7 @@ function startGeneration(brains) {
     generationTick = 0;
     forceFinish = false;
     lastProgressTick = 0;
-    trafficPatternIndex = 0;
-    nextTrafficId = 1;
-    trafficPool = [];
-    traffic = createTraffic();
+    traffic = trafficManager.reset(100);
     cars = [];
 
     for (let index = 0; index < trainingSettings.populationSize; index++) {
@@ -171,55 +172,6 @@ function startGeneration(brains) {
     updateStats();
 }
 
-/** 创建本代初始交通车，并为每次可计分的超车事件分配唯一 ID。 */
-function createTraffic() {
-    const vehicles = [];
-    let nextY = 100;
-    for (let index = 0; index < CONFIG.trafficCount; index++) {
-        const descriptor = getNextTrafficDescriptor();
-        nextY -= descriptor.gap;
-        vehicles.push(placeTrafficVehicle(descriptor, nextY));
-    }
-    return vehicles;
-}
-
-/**
- * 从对象池取得一辆交通车并放到指定位置；池为空时才创建新对象。
- * 每次重新进入车流都会分配新 ID，使同一对象的新一轮超车可以独立计数。
- */
-function placeTrafficVehicle(descriptor, y) {
-    const vehicle = trafficPool.pop() || new Car(
-        road.getLaneCenter(descriptor.lane),
-        y,
-        30,
-        50,
-        "DUMMY",
-        2,
-        getRandomColor()
-    );
-    vehicle.x = road.getLaneCenter(descriptor.lane);
-    vehicle.y = y;
-    vehicle.speed = 0;
-    vehicle.angle = 0;
-    vehicle.damaged = false;
-    vehicle.trafficId = nextTrafficId++;
-    // 临时关闭控制输入再更新，只重建当前位置的多边形，不让车辆在放置过程中额外移动。
-    vehicle.controls.forward = false;
-    vehicle.controls.left = false;
-    vehicle.controls.right = false;
-    vehicle.controls.reverse = false;
-    vehicle.update(road.borders, []);
-    vehicle.controls.forward = true;
-    return vehicle;
-}
-
-/** 按固定循环取出下一辆交通车的车道和间距，使不同世代路况可复现。 */
-function getNextTrafficDescriptor() {
-    const descriptor = TRAFFIC_PATTERN[trafficPatternIndex % TRAFFIC_PATTERN.length];
-    trafficPatternIndex++;
-    return descriptor;
-}
-
 // ==================== 单帧模拟与本代结束条件 ====================
 
 /**
@@ -251,7 +203,8 @@ function simulateTick() {
     bestCar = cars.reduce((best, car) =>
         compareCarsForSelection(car, best) > 0 ? car : best
     );
-    maintainInfiniteTraffic();
+    // 11.3 将所有未碰撞车辆视为仍需交通覆盖的有效车辆。
+    traffic = trafficManager.maintain(cars.filter(car => !car.damaged));
 
     if (aliveVehicleProgressed) {
         lastProgressTick = generationTick;
@@ -272,51 +225,7 @@ function simulateTick() {
     }
 }
 
-// ==================== 无限交通与进展规则 ====================
-
-/**
- * 维护覆盖整个存活测试车队的无限交通流：
- * 1. 只有落到最后方测试车后方足够远的交通车，才退出活动车流并进入对象池。
- * 2. 领先区域不足目标数量时，在车流最前方补车，并优先复用对象池中的车辆。
- *
- * “最后方回收、最前方补充”刻意使用不同基准，避免领先的非最佳车把后方最佳车
- * 尚未遇到的障碍提前挪走。测试车队伍跨度较大时，活动交通车数量会暂时超过 10 辆。
- */
-function maintainInfiniteTraffic() {
-    const aliveCars = cars.filter(car => !car.damaged);
-    if (aliveCars.length === 0) return;
-
-    const frontmostCarY = Math.min(...aliveCars.map(car => car.y));
-    const rearmostCarY = Math.max(...aliveCars.map(car => car.y));
-
-    // 先回收已经落到所有存活测试车后方的交通车；仍可能被任一测试车遇到的车必须保留。
-    const activeTraffic = [];
-    for (const vehicle of traffic) {
-        if (vehicle.y > rearmostCarY + CONFIG.trafficRecycleBehindDistance) {
-            trafficPool.push(vehicle);
-        } else {
-            activeTraffic.push(vehicle);
-        }
-    }
-    traffic = activeTraffic;
-
-    // 行驶方向朝向更小的 y；这里只统计真正位于最靠前测试车前方的交通车。
-    // 落在领先车后方的车辆即使距离很近，也仍然只服务后车，不能抵扣前方补车数量。
-    let trafficAheadCount = traffic.filter(vehicle =>
-        vehicle.y < frontmostCarY
-    ).length;
-    let frontmostTrafficY = Math.min(
-        ...traffic.map(vehicle => vehicle.y),
-        frontmostCarY - CONFIG.trafficRecycleBehindDistance
-    );
-
-    while (trafficAheadCount < CONFIG.trafficCount) {
-        const descriptor = getNextTrafficDescriptor();
-        frontmostTrafficY -= descriptor.gap;
-        traffic.push(placeTrafficVehicle(descriptor, frontmostTrafficY));
-        trafficAheadCount++;
-    }
-}
+// ==================== 进展规则 ====================
 
 /**
  * 判断一辆存活车辆是否相对自身记录继续向前。
@@ -634,7 +543,8 @@ function updateStats() {
     document.getElementById("currentScoreValue").textContent = formatDistance(bestCar?.training.distance || 0);
     document.getElementById("bestScoreValue").textContent = formatDistance(bestEver?.distance || 0);
     document.getElementById("overtakeValue").textContent = bestCar?.training.overtakenTraffic.size || 0;
-    document.getElementById("trafficGeneratedValue").textContent = nextTrafficId - 1;
+    document.getElementById("trafficGeneratedValue").textContent =
+        trafficManager.getStats().generatedEventCount;
     document.getElementById("mutationValue").textContent = trainingSettings.mutationAmount.toFixed(2);
 }
 
